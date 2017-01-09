@@ -34,6 +34,7 @@ SIZE    		:= "$(GNU_PREFIX)size"
 remduplicates = $(strip $(if $1,$(firstword $1) $(call remduplicates,$(filter-out $(firstword $1),$1))))
 
 #sources project
+C_SOURCE_FILES += $(PRJ_PATH)/rcs730.c
 C_SOURCE_FILES += $(PRJ_PATH)/main.c
 
 #includes common to all targets

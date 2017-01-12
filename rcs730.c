@@ -20,6 +20,15 @@
 #define RETRY_NUM       (10)            //max I2C Retry count
 
 
+#if 1
+#define DBG_PRINTF(...)
+#define DBG_PERROR(...)
+#else
+#define DBG_PRINTF      printf
+#define DBG_PERROR      perror
+#endif
+
+
 //static uint8_t                  _slvAddr;
 static RCS730_callbacktable_t   _cbTable;
 static int                      _fd = -1;
@@ -65,18 +74,18 @@ int RCS730_open(void)
     _cbTable.pCbRxHTWDone = 0;
     _fd = open(I2C_DEV, O_RDWR);
     if (_fd == -1) {
-        perror("open");
+        DBG_PERROR("open");
         return RCS730_ERROR;
     }
     int ret = ioctl(_fd, I2C_SLAVE, I2C_SLV_ADDR);
     if (ret < 0) {
-        perror("ioctl");
+        DBG_PERROR("ioctl");
         return RCS730_ERROR;
     }
-    for (uint16_t reg = RCS730_REG_OPMODE; reg <= RCS730_REG_PLUG_CONF3; reg += 4) {
-        uint32_t val;
-        RCS730_readRegister(reg, &val);
-    }
+//    for (uint16_t reg = RCS730_REG_OPMODE; reg <= RCS730_REG_PLUG_CONF3; reg += 4) {
+//        uint32_t val;
+//        RCS730_readRegister(reg, &val);
+//    }
 
     return RCS730_SUCCESS;
 }
@@ -136,7 +145,7 @@ int RCS730_pageWrite(uint16_t MemAddr, const uint8_t *pData, uint8_t Length)
     p = buf;
     do {
         ret = write(_fd, p, len);
-        //printf("[%d]W ret=%d\n", __LINE__, ret);
+        //DBG_PRINTF("[%d]W ret=%d\n", __LINE__, ret);
         if (ret > 0) {
             p += ret;
             len -= ret;
@@ -169,7 +178,7 @@ int RCS730_sequentialRead(uint16_t MemAddr, uint8_t *pData, uint8_t Length)
     p = buf;
     do {
         ret = write(_fd, p, len);
-        //printf("[%d]RW ret=%d\n", __LINE__, ret);
+        //DBG_PRINTF("[%d]RW ret=%d\n", __LINE__, ret);
         if (ret > 0) {
             p += ret;
             len -= ret;
@@ -179,12 +188,12 @@ int RCS730_sequentialRead(uint16_t MemAddr, uint8_t *pData, uint8_t Length)
         retry = RETRY_NUM;
         do {
             ret = read(_fd, pData, Length);
-            //printf("[%d]RR ret=%d\n", __LINE__, ret);
+            //DBG_PRINTF("[%d]RR ret=%d\n", __LINE__, ret);
             pData += ret;
             Length -= ret;
         } while ((Length > 0) && (retry--));
     } else {
-        printf("RW fail\n");
+        DBG_PRINTF("RW fail\n");
     }
 
     return (int)((Length == 0) ? RCS730_SUCCESS : RCS730_ERROR);
@@ -209,14 +218,14 @@ int RCS730_currentAddrRead(uint8_t *pData)
 int RCS730_readRegister(uint16_t Reg, uint32_t* pData)
 {
     int ret = RCS730_sequentialRead(Reg, (uint8_t*)pData, sizeof(uint32_t));
-    printf("[%s]Reg=%04x, Data=%08x\n", __func__, Reg, *pData);
+    DBG_PRINTF("[%s]Reg=%04x, Data=%08x\n", __func__, Reg, *pData);
     return ret;
 }
 
 
 int RCS730_writeRegisterForce(uint16_t Reg, uint32_t Data)
 {
-    printf("[%s]Reg=%04x, Data=%08x\n", __func__, Reg, Data);
+    DBG_PRINTF("[%s]Reg=%04x, Data=%08x\n", __func__, Reg, Data);
     return RCS730_pageWrite(Reg, (const uint8_t*)&Data, sizeof(Data));
 }
 
@@ -229,7 +238,7 @@ int RCS730_writeRegister(uint16_t Reg, uint32_t Data, uint32_t Mask)
     ret = RCS730_readRegister(Reg, &cur);
     if (ret == RCS730_SUCCESS) {
         if ((cur & Mask) != Data) {
-            printf("[%s]Reg=%04x, Data=%08x\n", __func__, Reg, Data);
+            DBG_PRINTF("[%s]Reg=%04x, Data=%08x\n", __func__, Reg, Data);
 
             // change value
             Data |= cur & ~Mask;
@@ -290,7 +299,21 @@ int RCS730_initFTMode(RCS730_OpMode Mode)
 
     ret = RCS730_setRegOpMode(Mode);
     if (ret == RCS730_SUCCESS) {
-        ret = RCS730_setRegInterruptMask(RCS730_MSK_INT_TAG_RW_RX_DONE2, 0);
+        ret = RCS730_setRegInterruptMask(
+                RCS730_MSK_INT_TAG_RW_RX_DONE2,
+//                RCS730_MSK_INT_TAG_RX_DONE |
+//                RCS730_MSK_INT_TAG_PL_RX_DONE |
+//                RCS730_MSK_INT_TAG_RW_RX_DONE1 |
+//                RCS730_MSK_INT_TAG_RW_RX_DONE2 |
+//                RCS730_MSK_INT_TAG_RW_RX_DONE3 |
+//                RCS730_MSK_INT_TAG_TX_DONE,
+                0);
+    }
+//    if (ret == RCS730_SUCCESS) {
+//        ret = RCS730_setRegPlugSysCode(RCS730_PLUG_SYS_CODE_NDEF);
+//    }
+    if (ret == RCS730_SUCCESS) {
+        ret = RCS730_writeRegister(RCS730_REG_PLUG_CONF3, 0x67452301, RCS730_REG_MASK_VAL);
     }
 
     return ret;
@@ -319,17 +342,17 @@ void RCS730_isrIrq(void)
     uint32_t intstat;
     uint8_t rf_buf[256];
 
+    (void)RCS730_readRegister(RCS730_REG_INT_RAW_STATUS, &intstat);
+
     ret = RCS730_readRegister(RCS730_REG_INT_STATUS, &intstat);
     if (ret == RCS730_SUCCESS) {
-        printf("[%d]OK1\n", __LINE__);
-
         if (intstat & RCS730_MSK_INT_TAG_RW_RX_DONE2) {
             //Read or Write w/o Enc Rx done for HT block
             int len = read_rf_buf(rf_buf);
             if (len > 0) {
                 switch (rf_buf[1]) {
                     case 0x06:  //Read w/o Enc
-                        printf("[%d]read\n", __LINE__);
+                        DBG_PRINTF("[%d]read\n", __LINE__);
                         if (_cbTable.pCbRxHTRDone) {
                             b_send = (*_cbTable.pCbRxHTRDone)(_cbTable.pUserData, rf_buf, len);
                         }
@@ -344,7 +367,7 @@ void RCS730_isrIrq(void)
                 }
             }
         } else {
-            printf("[%d]intstat=%d\n", __LINE__, intstat);
+            DBG_PRINTF("[%d]intstat=%d\n", __LINE__, intstat);
         }
 #if 0
         if (_cbTable.pCbRxDepDone && (intstat & RCS730_MSK_INT_TAG_NFC_DEP_RX_DONE)) {
